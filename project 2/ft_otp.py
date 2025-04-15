@@ -1,80 +1,73 @@
+import argparse
+import os
+import time
 import hmac
 import hashlib
-import time
-import os
+import base64
 
-# Constants
-KEY_FILE = "ft_otp.key"
-ENCRYPTION_KEY = 0x5A  # Simple XOR key
-HEX_KEY_LENGTH = 64
-BIN_KEY_LENGTH = 32  # 64 hex characters -> 32 bytes
+KEY_FILE = 'ft_otp.key'
+INTERVAL = 30  # 30 seconds
 
-# Validate the hex key
-def is_valid_hex(hex_key):
-    return len(hex_key) == HEX_KEY_LENGTH and all(c in '0123456789abcdefABCDEF' for c in hex_key)
-
-# Convert hex to binary
-def hex_to_bin(hex_key):
-    return bytes.fromhex(hex_key)
-
-# Encrypt/decrypt with XOR
-def xor_encrypt(data, key):
-    return bytes([b ^ key for b in data])
-
-# Save key to ft_otp.key after encryption
-def generate_key(file_path):
+def is_valid_hex(hex_string):
     try:
-        with open(file_path, 'r') as f:
-            hex_key = f.read().strip()
-        
-        if not is_valid_hex(hex_key):
-            print("Error: key must be 64 hexadecimal characters.")
+        bytes.fromhex(hex_string)
+        return len(hex_string) == 64
+    except ValueError:
+        return False
+
+def save_key(hex_key):
+    binary_key = bytes.fromhex(hex_key)
+    encoded_key = base64.b64encode(binary_key).decode()
+    with open(KEY_FILE, 'w') as f:
+        f.write(encoded_key)
+    print("Key was successfully saved in ft_otp.key.")
+
+def load_key(filename):
+    try:
+        with open(filename, 'r') as f:
+            encoded_key = f.read().strip()
+            return base64.b64decode(encoded_key)
+    except Exception as e:
+        print(f"Error loading key: {e}")
+        exit(1)
+
+def hotp(key, counter):
+    counter_bytes = counter.to_bytes(8, 'big')
+    hmac_hash = hmac.new(key, counter_bytes, hashlib.sha1).digest()
+    offset = hmac_hash[-1] & 0x0F
+    code = ((hmac_hash[offset] & 0x7F) << 24 |
+            (hmac_hash[offset + 1] & 0xFF) << 16 |
+            (hmac_hash[offset + 2] & 0xFF) << 8 |
+            (hmac_hash[offset + 3] & 0xFF))
+    return str(code % 1000000).zfill(6)
+
+def generate_otp(filename):
+    key = load_key(filename)
+    counter = int(time.time()) // INTERVAL
+    otp = hotp(key, counter)
+    print(otp)
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-g', metavar='key_file', help='Generate and store key')
+    parser.add_argument('-k', metavar='stored_key', help='Generate OTP')
+    args = parser.parse_args()
+
+    if args.g:
+        if not os.path.exists(args.g):
+            print("error: key file not found.")
             return
-        
-        binary_key = hex_to_bin(hex_key)
-        encrypted_key = xor_encrypt(binary_key, ENCRYPTION_KEY)
-        
-        with open(KEY_FILE, 'wb') as f:
-            f.write(encrypted_key)
-        
-        print("Key was successfully saved in ft_otp.key.")
-    except Exception as e:
-        print(f"Error: {e}")
-
-# Generate OTP from the key
-def generate_otp(file_path):
-    try:
-        with open(file_path, 'rb') as f:
-            encrypted_key = f.read()
-        
-        decrypted_key = xor_encrypt(encrypted_key, ENCRYPTION_KEY)
-
-        # HOTP: Use the current time to generate a counter (time-based)
-        counter = int(time.time() // 60)  # One OTP every minute
-        counter_bytes = counter.to_bytes(8, byteorder='big')
-
-        # HMAC-SHA1
-        hmac_result = hmac.new(decrypted_key, counter_bytes, hashlib.sha1).digest()
-
-        # Truncate to 6 digits OTP
-        offset = hmac_result[19] & 0xf
-        otp = (int.from_bytes(hmac_result[offset:offset+4], byteorder='big') & 0x7fffffff) % 1000000
-
-        print(f"{otp:06d}")
-    except Exception as e:
-        print(f"Error: {e}")
-
-# Main function to parse arguments and call appropriate methods
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) != 3:
-        print(f"Usage: {sys.argv[0]} -g keyfile | -k ft_otp.key")
-        sys.exit(1)
-
-    if sys.argv[1] == "-g":
-        generate_key(sys.argv[2])
-    elif sys.argv[1] == "-k":
-        generate_otp(sys.argv[2])
+        with open(args.g, 'r') as f:
+            key = f.read().strip()
+            if not is_valid_hex(key):
+                print("error: key must be 64 hexadecimal characters.")
+                return
+            save_key(key)
+    elif args.k:
+        generate_otp(args.k)
     else:
-        print(f"Invalid option: {sys.argv[1]}")
-        sys.exit(1)
+        parser.print_help()
+
+if __name__ == "__main__":
+    main()
+
