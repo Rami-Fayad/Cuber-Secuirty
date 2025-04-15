@@ -1,0 +1,11 @@
+{
+  "name": "scorpion",
+  "version": "1.0.0",
+  "description": "Image metadata analyzer",
+  "main": "scorpion.js",
+  "scripts": {
+    "start": "node scorpion.js"
+  },
+  "author": "",
+  "license": "ISC"
+} 
